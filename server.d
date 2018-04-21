@@ -1,61 +1,56 @@
 import std.stdio;
 import std.socket;
 import std.concurrency;
+import std.uuid;
 
 enum PORT = 6969;
 
 struct CHDClient {
-  int id;
+  UUID id;
   Tid tid;
   Socket sock;
+
+  this(Socket sock) {
+    this.id   = randomUUID();
+    this.sock = sock;
+    this.tid  = spawn(&clientHandler, cast(shared Socket)sock, this.id);
+  }
 }
 
 struct CHDServer {
-  int hid;
   Socket sock;
-  CHDClient[] clients;
+  CHDClient*[UUID] clients;
 
   this(ushort port) {
     this.sock = new TcpSocket();
     this.sock.setOption(SocketOptionLevel.SOCKET, SocketOption.REUSEADDR, true);
     this.sock.bind(new InternetAddress(port));
     this.sock.listen(1);
-    this.clients.length = 128;
   }
 
-  int genHid() {
-    return this.hid++;
-  }
 
   void addClient(Socket sock) {
-    auto clientId = this.genHid();
-
-    // assume no collisions for now
-    if (clientId+1 >= this.clients.length) {
-      this.clients.length *= 2;
-    }
-
-    auto client = &this.clients[clientId];
-    client.sock = sock;
-    client.id = this.genHid();
-    client.tid = spawn(&clientHandler, cast(shared Socket)client.sock, client.id);
+    auto id = randomUUID();
+    auto client = new CHDClient(sock);
+    this.clients[client.id] = client;
   }
 }
 
 
-static void clientHandler(shared Socket s, int id) {
+static void clientHandler(shared Socket s, UUID id) {
   Socket client = cast(Socket)s;
   char[2048] buffer;
   string clientAddr = client.remoteAddress.toAddrString;
 
-  writefln("chd server [%d]: client (%s) connected", id, clientAddr);
+  writefln("chd server [%s]: client (%s) connected", id, clientAddr);
 
   long received;
   while ((received = client.receive(buffer)) > 0) {
-    writefln("chd server [%d]: received %d bytes (%s)", id, received, buffer[0..received]);
+    writefln("chd server [%s]: received %d bytes (%s)", id, received, buffer[0..received]);
+    client.send(buffer[0..received]);
   }
 
-  writefln("chd server [%d]: client %s disconnected", id, clientAddr);
+  writefln("chd server [%s]: client %s disconnected", id, clientAddr);
 }
 
 
@@ -68,8 +63,6 @@ void main() {
   // handle accepting new clients
   while (true) {
     Socket client = ssock.accept();
-
     serv.addClient(client);
-
   }
 }
